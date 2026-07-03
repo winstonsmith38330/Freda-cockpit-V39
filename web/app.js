@@ -245,7 +245,7 @@ function renderAudits() {
 
 function renderWhatsapp() {
   const w = state.live.whatsapp || { summaries: [], actions: [] };
-  return `<section class="card"><h2>WhatsApp stock workflow</h2><p>Upload exported WhatsApp .txt/.zip to detect sold-out times, leftovers and stock pressure. Store detection uses the TXT filename inside the ZIP when it contains BH, PN or TP. Photo OCR is staged.</p><input id="whatsappFile" type="file" accept=".txt,.zip"><div class="actions"><button class="primary" data-action="upload-whatsapp">Upload WhatsApp export</button><button class="ghost" data-action="clear-whatsapp">Clear WhatsApp import</button></div><p class="small">Use one ZIP per store. The parser reads names like “LA Donuts BH”, “LA DONUTS PN” or “LA DONUT TP” from the text file inside the ZIP.</p></section><section class="card"><h2>WhatsApp summary</h2>${(w.summaries || []).length ? (w.summaries || []).slice(0,3).map(x => `<div class="notice"><b>${esc(x.source || 'WhatsApp export')}</b>${x.storeHint && x.storeHint !== 'Unknown' ? ` · Store: <b>${esc(x.storeHint)}</b>` : ''}<br>${esc(x.summary || '')}<br><span class="small">Messages ${num(x.messageCount)} · Photos ${num(x.photoCount)} · Parsed ${esc(x.parsedAt || '')}</span></div>`).join('') : '<p>No WhatsApp export parsed yet.</p>'}</section><section class="card"><h2>WhatsApp actions</h2>${actionList(w.actions || [])}</section>`;
+  return `<section class="card"><h2>WhatsApp stock workflow</h2><p>Primary workflow: Nicolas places WhatsApp export .zip/.txt files in <code>server/data/imports/whatsapp</code>, commits them to GitHub, then clicks the refresh button below. Store detection uses the TXT filename inside each ZIP when it contains BH, PN or TP. Photo OCR is staged.</p><div class="actions"><button class="primary" data-action="refresh-whatsapp-imports">Refresh WhatsApp from GitHub imports</button><button class="ghost" data-action="clear-whatsapp">Clear WhatsApp import</button></div><p class="small">Use one ZIP/TXT per store. Recommended names: “LA Donuts BH”, “LA DONUTS PN”, “LA DONUT TP”. This refresh replaces the previous WhatsApp actions so Nicolas controls the full refresh.</p><details><summary>Manual upload fallback</summary><p class="small">Use only for diagnostics. Freda does not need to upload files.</p><input id="whatsappFile" type="file" accept=".txt,.zip"><div class="actions"><button class="secondary" data-action="upload-whatsapp">Upload WhatsApp export manually</button></div></details></section><section class="card"><h2>WhatsApp summary</h2>${(w.summaries || []).length ? (w.summaries || []).slice(0,5).map(x => `<div class="notice"><b>${esc(x.source || 'WhatsApp export')}</b>${x.storeHint && x.storeHint !== 'Unknown' ? ` · Store: <b>${esc(x.storeHint)}</b>` : ''}<br>${esc(x.summary || '')}<br><span class="small">Messages ${num(x.messageCount)} · Photos ${num(x.photoCount)} · Parsed ${esc(x.parsedAt || '')}</span></div>`).join('') : '<p>No WhatsApp import parsed yet.</p>'}</section><section class="card"><h2>WhatsApp actions</h2>${actionList(w.actions || [])}</section>`;
 }
 
 function renderAsk() {
@@ -269,6 +269,7 @@ async function handleAction(action, btn) {
     if (action === 'complete-training') return await postJson('/api/training/completions', { staffName: prompt('Staff name?') || 'Staff', moduleId: btn.dataset.module, score: 100, managerSignoff: true });
     if (action === 'search-sop') return searchSop();
     if (action === 'add-audit') return await addAudit();
+    if (action === 'refresh-whatsapp-imports') return await refreshWhatsappImports();
     if (action === 'upload-whatsapp') return await uploadWhatsapp();
     if (action === 'clear-whatsapp') return await clearWhatsapp();
     if (action === 'ask-ai') return await askAi();
@@ -386,6 +387,14 @@ function searchSop() {
   $('#sopResult').innerHTML = found ? `<div class="notice"><b>${esc(found.title)}</b><ol>${found.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol></div>` : '<p>No SOP found.</p>';
 }
 async function addAudit() { await postJson('/api/audits', { store: $('#auditStore').value, type: $('#auditType').value, zone: $('#auditZone').value, score: $('#auditScore').value, comment: $('#auditComment').value }); }
+async function refreshWhatsappImports() {
+  $('#syncStatus').textContent = 'Refreshing WhatsApp from GitHub imports...';
+  const data = await postJson('/api/sync/whatsapp/imports', {}, false);
+  state.live = data.live;
+  const parsed = data.result?.summary?.summary || 'WhatsApp import folder refreshed';
+  $('#syncStatus').textContent = parsed;
+  render();
+}
 async function uploadWhatsapp() {
   const file = $('#whatsappFile').files[0];
   if (!file) return alert('Choose a WhatsApp .txt/.zip export first.');
