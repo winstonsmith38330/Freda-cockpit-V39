@@ -12,7 +12,7 @@ import { readJson, writeJson, emptyLiveState, mergeLive, applySyncResult, addCap
 import { syncReportingSite, reportingDiagnostics } from './src/connectors/reportingSiteConnector.js';
 import { syncUber, uberDiagnostics } from './src/connectors/uberConnector.js';
 import { syncSquare, diagnoseSquare, squareDiagnostics } from './src/connectors/squareConnector.js';
-import { syncWhatsappUpload, whatsappDiagnostics } from './src/connectors/whatsappConnector.js';
+import { syncWhatsappUpload, syncWhatsappImports, whatsappDiagnostics } from './src/connectors/whatsappConnector.js';
 import { syncAll, syncRecentFallback } from './src/services/syncService.js';
 import { syncFileImports, fileImportDiagnostics } from './src/importers/fileImportService.js';
 import { analyseOperations } from './src/services/operationsAnalysis.js';
@@ -256,6 +256,55 @@ app.post('/api/sync/whatsapp', upload.single('file'), (req, res) => {
   } finally {
     fs.promises.unlink(req.file.path).catch(() => {});
   }
+});
+
+app.post('/api/sync/whatsapp/imports', (_req, res) => {
+  const result = syncWhatsappImports(process.env);
+  if (!result.ok) return res.status(400).json(result);
+  // Full refresh mode: GitHub import folder is the source of truth for WhatsApp.
+  // Clear previous WhatsApp state before applying the newly committed exports.
+  const cleared = { ...liveRaw(), updatedAt: new Date().toISOString(), whatsapp: { summaries: [], actions: [] } };
+  let next = addWhatsapp(cleared, result);
+  if (Array.isArray(result.importedSummaries) && result.importedSummaries.length) {
+    next = {
+      ...next,
+      whatsapp: {
+        ...next.whatsapp,
+        summaries: result.importedSummaries.slice(0, 20),
+        actions: (result.actions || []).slice(0, 120)
+      }
+    };
+  }
+  saveLive(next);
+  res.json({ ok: true, result, live: liveMerged() });
+});
+app.post('/api/whatsapp/imports', (_req, res) => {
+  const result = syncWhatsappImports(process.env);
+  if (!result.ok) return res.status(400).json(result);
+  const cleared = { ...liveRaw(), updatedAt: new Date().toISOString(), whatsapp: { summaries: [], actions: [] } };
+  let next = addWhatsapp(cleared, result);
+  if (Array.isArray(result.importedSummaries) && result.importedSummaries.length) {
+    next = {
+      ...next,
+      whatsapp: {
+        ...next.whatsapp,
+        summaries: result.importedSummaries.slice(0, 20),
+        actions: (result.actions || []).slice(0, 120)
+      }
+    };
+  }
+  saveLive(next);
+  res.json({ ok: true, result, live: liveMerged() });
+});
+app.post('/api/sync/whatsapp/clear', (_req, res) => {
+  const next = { ...liveRaw(), updatedAt: new Date().toISOString(), whatsapp: { summaries: [], actions: [] } };
+  saveLive(next);
+  res.json({ ok: true, status: 'cleared', live: liveMerged() });
+});
+app.post('/api/whatsapp/clear', (_req, res) => {
+  const next = { ...liveRaw(), updatedAt: new Date().toISOString(), whatsapp: { summaries: [], actions: [] } };
+  saveLive(next);
+  res.json({ ok: true, status: 'cleared', live: liveMerged() });
 });
 
 app.post('/api/captures/browser', (req, res) => {
