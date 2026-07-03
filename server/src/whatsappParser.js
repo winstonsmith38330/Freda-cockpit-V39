@@ -2,9 +2,9 @@ import fs from 'fs';
 import AdmZip from 'adm-zip';
 
 const STORE_PATTERNS = [
-  ['Beverly Hills', /beverly|\bbh\b/i],
-  ['Penrith', /penrith|\bpen\b|\bpn\b/i],
-  ['Taren Point', /taren|\btp\b/i],
+  ['Beverly Hills', /beverly|la\s*donuts?\s*bh|\bbh\b/i],
+  ['Penrith', /penrith|la\s*donuts?\s*pn|\bpen\b|\bpn\b/i],
+  ['Taren Point', /taren|la\s*donuts?\s*tp|\btp\b/i],
   ["Frieda's Pies", /frieda|frida|pies/i]
 ];
 
@@ -18,10 +18,12 @@ export function parseWhatsappUpload(file) {
     if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: 'Uploaded file was not available on the server. Please retry the upload.', diagnostics };
 
     let text = '';
+    const sourceNames = [file?.originalname || ''];
     if (name.endsWith('.zip')) {
       const zip = new AdmZip(filePath);
       const entries = zip.getEntries();
       diagnostics.entries = entries.map(e => ({ name: e.entryName, size: e.header?.size || 0, directory: e.isDirectory })).slice(0, 200);
+      for (const entry of entries) if (entry?.entryName) sourceNames.push(entry.entryName);
       for (const entry of entries) {
         if (entry.isDirectory) continue;
         const entryName = entry.entryName || '';
@@ -66,9 +68,11 @@ export function parseWhatsappUpload(file) {
       };
     }
 
+    const uploadStoreHint = inferStoreFromSources(sourceNames);
+    diagnostics.storeHint = uploadStoreHint;
     const messages = normaliseWhatsAppLines(text);
     if (!messages.length) diagnostics.warnings.push('Text was read, but no standard WhatsApp timestamp lines were detected. Parsed as free text.');
-    const actions = extractActions(messages);
+    const actions = extractActions(messages, uploadStoreHint);
     const stockRequests = extractStockRequests(text);
     const soldOutSignals = actions.filter(a => a.type === 'Sell-out').map(a => ({ store: a.store, time: a.time, text: a.body }));
     const leftoverSignals = actions.filter(a => a.type === 'Leftover').map(a => ({ store: a.store, time: a.time, text: a.body }));
@@ -76,6 +80,7 @@ export function parseWhatsappUpload(file) {
     return {
       ok: true,
       source: file.originalname,
+      storeHint: uploadStoreHint,
       messageCount: messages.length,
       photoCount,
       actions,
@@ -152,12 +157,12 @@ function to24h(value) {
   return `${String(h).padStart(2, '0')}:${min}`;
 }
 
-function extractActions(messages) {
+function extractActions(messages, storeHint = 'Unknown') {
   const actions = [];
   for (const msg of messages) {
     const line = msg.body || msg.raw || '';
     const lower = line.toLowerCase();
-    const store = inferStore(`${msg.sender} ${line}`);
+    const store = inferStore(`${msg.sender} ${line}`, storeHint);
     if (/sell.?out|sold out|soldout|empty|finished|no more|run out|ran out|plus rien|rupture/.test(lower)) {
       actions.push(makeAction('Sell-out', msg, store, 'High', 'Sold-out / empty stock signal', 'Check sell-out timing. If more than 3 hours before close, increase next same-day production unless it was planned/FOMO.'));
     } else if (/left.?over|leftover|waste|remain|remaining|reste|restant/.test(lower)) {
@@ -182,9 +187,17 @@ function extractStockRequests(text) {
 }
 function escapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-function inferStore(text = '') {
-  const hit = STORE_PATTERNS.find(([, re]) => re.test(text));
-  return hit?.[0] || 'Unknown';
+function inferStore(text = '', fallback = 'Unknown') {
+  const hit = STORE_PATTERNS.find(([, re]) => re.test(String(text || '')));
+  return hit?.[0] || fallback || 'Unknown';
+}
+
+function inferStoreFromSources(sourceNames = []) {
+  const joined = (sourceNames || []).filter(Boolean).map(x => String(x)).join(' | ');
+  // The WhatsApp exports used operationally include the store code in the TXT
+  // filename inside the ZIP, e.g. "LA DONUTS PN (reporting)",
+  // "LA DONUT TP (reporting)", or "LA Donuts BH (reporting)".
+  return inferStore(joined, 'Unknown');
 }
 
 function makeAction(type, msg, store, priority, title, recommendation) {

@@ -245,7 +245,7 @@ function renderAudits() {
 
 function renderWhatsapp() {
   const w = state.live.whatsapp || { summaries: [], actions: [] };
-  return `<section class="card"><h2>WhatsApp stock workflow</h2><p>Upload exported WhatsApp .txt/.zip to detect sold-out times, leftovers and stock pressure. V34 returns parse diagnostics if the ZIP cannot be read. Photo OCR is staged.</p><input id="whatsappFile" type="file" accept=".txt,.zip"><div class="actions"><button class="primary" data-action="upload-whatsapp">Upload WhatsApp export</button></div></section><section class="card"><h2>WhatsApp summary</h2>${(w.summaries || []).length ? (w.summaries || []).slice(0,3).map(x => `<div class="notice"><b>${esc(x.source || 'WhatsApp export')}</b><br>${esc(x.summary || '')}<br><span class="small">Messages ${num(x.messageCount)} · Photos ${num(x.photoCount)} · Parsed ${esc(x.parsedAt || '')}</span></div>`).join('') : '<p>No WhatsApp export parsed yet.</p>'}</section><section class="card"><h2>WhatsApp actions</h2>${actionList(w.actions || [])}</section>`;
+  return `<section class="card"><h2>WhatsApp stock workflow</h2><p>Upload exported WhatsApp .txt/.zip to detect sold-out times, leftovers and stock pressure. Store detection uses the TXT filename inside the ZIP when it contains BH, PN or TP. Photo OCR is staged.</p><input id="whatsappFile" type="file" accept=".txt,.zip"><div class="actions"><button class="primary" data-action="upload-whatsapp">Upload WhatsApp export</button><button class="ghost" data-action="clear-whatsapp">Clear WhatsApp import</button></div><p class="small">Use one ZIP per store. The parser reads names like “LA Donuts BH”, “LA DONUTS PN” or “LA DONUT TP” from the text file inside the ZIP.</p></section><section class="card"><h2>WhatsApp summary</h2>${(w.summaries || []).length ? (w.summaries || []).slice(0,3).map(x => `<div class="notice"><b>${esc(x.source || 'WhatsApp export')}</b>${x.storeHint && x.storeHint !== 'Unknown' ? ` · Store: <b>${esc(x.storeHint)}</b>` : ''}<br>${esc(x.summary || '')}<br><span class="small">Messages ${num(x.messageCount)} · Photos ${num(x.photoCount)} · Parsed ${esc(x.parsedAt || '')}</span></div>`).join('') : '<p>No WhatsApp export parsed yet.</p>'}</section><section class="card"><h2>WhatsApp actions</h2>${actionList(w.actions || [])}</section>`;
 }
 
 function renderAsk() {
@@ -270,6 +270,7 @@ async function handleAction(action, btn) {
     if (action === 'search-sop') return searchSop();
     if (action === 'add-audit') return await addAudit();
     if (action === 'upload-whatsapp') return await uploadWhatsapp();
+    if (action === 'clear-whatsapp') return await clearWhatsapp();
     if (action === 'ask-ai') return await askAi();
   } catch (err) { alert(err.message || err); }
 }
@@ -404,7 +405,18 @@ async function uploadWhatsapp() {
     throw new Error(entries ? `${details}. ZIP entries seen: ${entries}` : details);
   }
   state.live = data.live;
+  const input = $('#whatsappFile');
+  if (input) input.value = '';
   $('#syncStatus').textContent = `WhatsApp upload parsed: ${data.result?.summary?.summary || data.result?.summary?.messageCount + ' messages' || 'success'}`;
+  render();
+}
+async function clearWhatsapp() {
+  if (!confirm('Clear the imported WhatsApp summary/actions so you can re-upload cleanly?')) return;
+  const data = await postJson('/api/sync/whatsapp/clear', {}, false);
+  state.live = data.live;
+  const input = $('#whatsappFile');
+  if (input) input.value = '';
+  $('#syncStatus').textContent = 'WhatsApp import cleared';
   render();
 }
 async function askAi() {
